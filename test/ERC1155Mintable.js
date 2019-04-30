@@ -5,6 +5,11 @@ const expectThrow = require('./helpers/expectThrow');
 
 const ERC1155Mintable = artifacts.require('ERC1155Mintable.sol');
 const ERC1155MockReceiver = artifacts.require('ERC1155MockReceiver.sol');
+
+const ERC1820Implementer = artifacts.require('ERC1820Implementer.sol');
+const ERC1820Registry = artifacts.require('ERC1820Registry.sol');
+const DumbReceiver = artifacts.require('DumbReceiver.sol');
+
 const BigNumber = require('bignumber.js');
 
 let user1;
@@ -14,6 +19,10 @@ let user4;
 let mainContract;
 let receiverContract;
 let tx;
+
+let erc1820Implementer;
+let erc1820Registry;
+let erc1820DumbReceiver;
 
 let zeroAddress = '0x0000000000000000000000000000000000000000';
 
@@ -152,7 +161,7 @@ async function testSafeBatchTransferFrom(operator, from, to, ids, quantities, da
     }
 }
 
-contract('ERC1155Mintable - tests all core 1155 functionality.', (accounts) => {
+contract('ERC1155Mintable1820 - tests all core 1155 functionality and then with 1820 support.', (accounts) => {
     before(async () => {
         user1 = accounts[1];
         user2 = accounts[2];
@@ -404,9 +413,45 @@ contract('ERC1155Mintable - tests all core 1155 functionality.', (accounts) => {
         await expectThrow(mainContract.mint(hammerId, [user3], [1], {from: user2}));
     });
 
-    it('mint (implementation specific) - fails on receiver contract invalid response - not tested', async () => {
+    it('kick off initial 1820 setup', async () => {
+        erc1820Registry = await ERC1820Registry.new(); // you'd want to hardcode this for test/main nets perhaps
+        erc1820Implementer = await ERC1820Implementer.new();
+        erc1820DumbReceiver = await DumbReceiver.new();
+
+        await mainContract.set1820Registry(erc1820Registry.address);
+        await erc1820DumbReceiver.set1820Registry(erc1820Registry.address);
     });
 
-    it('mint (implementation specific) - emits a valid Transfer* event - not tested', async () => {
+    it('try to send to contract that does not have 1155 receiver or 1820 re-direct', async () => {
+
+        let preBalanceFrom = new BigNumber(await mainContract.balanceOf(user1, hammerId));
+        assert(preBalanceFrom > 0);
+        await expectThrow(mainContract.safeTransferFrom(user1, erc1820DumbReceiver.address, hammerId, 1, web3.utils.fromAscii(''), {from: user1}));
+    });
+
+    it('set 1820 interface on the dumb receiver to allow impl to re-direct', async () => {
+        await erc1820DumbReceiver.set1820Interface(erc1820Implementer.address);
+    });
+
+    it('send 1155 to dumb receiver with the 1820 implementor passing back the correct ERC1155_ACCEPTED response', async () => {
+        await testSafeTransferFrom(user1, user1, erc1820DumbReceiver.address, hammerId, 1, web3.utils.fromAscii(''));
+    });
+
+    it('send 1155 to dumb receiver with the 1820 implementor passing back ERC1155_REJECTED response after being told to reject', async () => {
+
+        erc1820Implementer.setShouldReject(true);
+
+        let preBalanceFrom = new BigNumber(await mainContract.balanceOf(user1, hammerId));
+        assert(preBalanceFrom > 0);
+        await expectThrow(mainContract.safeTransferFrom(user1, erc1820DumbReceiver.address, hammerId, 1, web3.utils.fromAscii(''), {from: user1}));
+    });
+
+    it('and again after turing off rejection', async () => {
+
+        erc1820Implementer.setShouldReject(false);
+
+        let preBalanceFrom = new BigNumber(await mainContract.balanceOf(user1, hammerId));
+        assert(preBalanceFrom > 0);
+        await testSafeTransferFrom(user1, user1, erc1820DumbReceiver.address, hammerId, 1, web3.utils.fromAscii(''));
     });
 });
