@@ -23,8 +23,6 @@ contract ERC1155 is IERC1155, ERC165
     // owner => (operator => approved)
     mapping (address => mapping(address => bool)) internal operatorApproval;
 
-    event Log(string _log);
-
 ////////////////////////////////////////// ERC1820 //////////////////////////////////////////////
 
     IERC1820Registry internal _erc1820;
